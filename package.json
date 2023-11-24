@@ -1,0 +1,16 @@
+{
+  "name": "lamdba",
+  "version": "1.0.0",
+  "description": "for lambda function",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.6.0",
+    "aws-sdk": "^2.1500.0",
+    "axios": "^1.6.2"
+  },
+  "author": "",
+  "license": "ISC"
+}
