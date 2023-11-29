@@ -48,7 +48,7 @@ async function storeInGoogleCloudStorage(userEmail, fileName, assignmentId) {
             destination: `${destinationFolder}/${assignmentId}/${userEmail}/${fileName}.zip`,
         });
         console.log('File uploaded to GCS successfully.');
-        return `${destinationFolder}/${assignmentId}/${userEmail}/${fileName}.zip`;
+        return `${bucketName}/${destinationFolder}/${assignmentId}/${userEmail}/${fileName}.zip`;
     } catch (error) {
         console.error('Error uploading to GCS:', error);
         let err = new Error('Error uploading to GCS');
