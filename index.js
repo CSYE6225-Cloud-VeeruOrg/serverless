@@ -16,43 +16,39 @@ async function downloadReleaseFromGitHub(githubRepoUrl, fileName) {
         const assetResponse = await axios.get(githubRepoUrl, {
             responseType: 'arraybuffer',
         });
-        console.error("---------- filename ------------");
-        console.error(fileName);
         const filePath = path.join('/tmp', `${fileName}.zip`);
-        console.error("---------- filepath ------------");
-        console.error(filePath);
+        console.log(filePath);
         fs.writeFileSync(filePath, assetResponse.data);
-
         console.log('Asset downloaded and stored:', githubRepoUrl);
-
     } catch (error) {
-        console.error(githubRepoUrl);
-        console.error('Error downloading release from GitHub:', error);
-        throw new Error('Error downloading submission file from Url');
+        console.error('Error downloading submission file from Url', error);
+        throw new Error('Invalid submission url');
     }
 };
 
-async function storeInGoogleCloudStorage(fileName) {
-    let keyJson = Buffer.from(process.env.ACCESS_KEY, 'base64').toString();
-    let key = JSON.parse(keyJson)['private_key'];
-    console.error(process.env.GCP_PROJECT_ID);
-    const storage = new Storage({
-        projectId: process.env.GCP_PROJECT_ID,
-        credentials: {
-            client_email: process.env.SERVICE_EMAIL,
-            private_key: key
-        },
-    });
-
-    const bucketName = process.env.BUCKET_NAME;
-    const filePath = `/tmp/${fileName}.zip`;
-    const destinationFolder = 'assignments';
-
+async function storeInGoogleCloudStorage(userEmail, fileName, assignmentId) {
     try {
+        let keyJson = Buffer.from(process.env.ACCESS_KEY, 'base64').toString();
+        let key = JSON.parse(keyJson)['private_key'];
+        console.error(process.env.GCP_PROJECT_ID);
+
+        const storage = new Storage({
+            projectId: process.env.GCP_PROJECT_ID,
+            credentials: {
+                client_email: process.env.SERVICE_EMAIL,
+                private_key: key
+            },
+        });
+
+        const bucketName = process.env.BUCKET_NAME;
+        const filePath = `/tmp/${fileName}.zip`;
+        const destinationFolder = 'assignments';
+
         await storage.bucket(bucketName).upload(filePath, {
-            destination: `${destinationFolder}/${fileName}.zip`,
+            destination: `${destinationFolder}/${assignmentId}/${userEmail}/${fileName}.zip`,
         });
         console.log('File uploaded to GCS successfully.');
+        return `${destinationFolder}/${assignmentId}/${userEmail}/${fileName}.zip`;
     } catch (error) {
         console.error('Error uploading to GCS:', error);
         let err = new Error('Error uploading to GCS');
@@ -61,36 +57,34 @@ async function storeInGoogleCloudStorage(fileName) {
     }
 };
 
-async function sendStatusEmail(userEmail, status, submissionDetails) {
+async function sendStatusEmail(userEmail, status, submissionDetails, location) {
     const successBody = `Dear ${userEmail},
 
-    We are pleased to inform you that your recent assignment submission has been successfully uploaded to Google Cloud Storage bucket.
-    
-    Status: Uploaded Successfully
-    Assignment ID: ${submissionDetails.assignment_id}
-    Submission Date: ${submissionDetails.submission_date}
-    
-    Please review your submission and confirm that everything is in order.
-    
-    Best regards,
-    Sai Veerendra Prathipati
-    
-    Unsubscribe: If you wish to opt-out of receiving further notifications, you can unsubscribe [here].`
+We are pleased to inform you that your recent assignment submission has been successfully uploaded to Google Cloud Storage bucket.
+
+Status: Uploaded Successfully
+Assignment ID: ${submissionDetails.assignment_id}
+Submission Date: ${submissionDetails.submission_date}
+File Location: ${location}
+
+Please review your submission and confirm that everything is in order.
+
+Best regards,
+Sai Veerendra Prathipati`
     
     const failedBody = `Dear ${userEmail},
 
-    We regret to inform you that there was an issue with the recent assignment submission. The upload to our Google Cloud Storage bucket was unsuccessful.
+We regret to inform you that there was an issue with the recent assignment submission. 
+${location}.
 
-    Status: Upload Failed
-    Assignment ID: ${submissionDetails.assignment_id}
-    Submission Date: ${submissionDetails.submission_date}
+Status: Upload Failed
+Assignment ID: ${submissionDetails.assignment_id}
+Submission Date: ${submissionDetails.submission_date}
 
-    Please attempt to submit your assignment again. 
-    
-    Best regards,
-    Sai Veerendra Prathipati
-    
-    Unsubscribe: If you wish to opt-out of receiving further notifications, you can unsubscribe [here].`
+Please attempt to submit your assignment again. 
+
+Best regards,
+Sai Veerendra Prathipati`
     
     const params = {
         Destination: { ToAddresses: [userEmail] },
@@ -100,7 +94,7 @@ async function sendStatusEmail(userEmail, status, submissionDetails) {
             } },
             Subject: { Data: `Assignment Upload Status` },
         },
-        Source: 'alert@demo.saiveerendra-prathipati.me',
+        Source: `alert@${process.env.DOMAIN}`,
     };
 
     try {
@@ -151,14 +145,19 @@ exports.handler = async (event) => {
 
     try {
         await downloadReleaseFromGitHub(githubRepoUrl, fileName);        
-        await storeInGoogleCloudStorage(fileName);
-        await sendStatusEmail(userEmail, 'success', submissionDetails);
+        const location = await storeInGoogleCloudStorage(userEmail, fileName, submissionDetails.assignment_id);
+        await sendStatusEmail(userEmail, 'success', submissionDetails, location);
         await trackSentEmails(userEmail, 'Upload successful', fileName, submissionDetails);
     } catch (error) {
-        if(error.message == 'Error uploading to GCS' || 'Error downloading submission file from Url') {
-            await sendStatusEmail(userEmail, 'failed', submissionDetails);
+        if(error.message == 'Error uploading to GCS') {
+            const message = 'The upload to our Google Cloud Storage bucket was unsuccessful. Please try again';
+            await sendStatusEmail(userEmail, 'failed', submissionDetails, message);
             await trackSentEmails(userEmail, 'Upload Failed', fileName, submissionDetails);
-        } else {
+        } else if (error.message == 'Invalid submission url') {
+            const message = 'Invalid submission Url. Kindly check your submission url';
+            await sendStatusEmail(userEmail, 'failed', submissionDetails, message);
+            await trackSentEmails(userEmail, 'Upload Failed', fileName, submissionDetails);
+        }    else {
             console.error('Error:', error);
         }    
     }
